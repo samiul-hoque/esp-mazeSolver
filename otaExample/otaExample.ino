@@ -26,6 +26,12 @@ bool ledState = 0;
 const int ledPin = 2;
 
 unsigned long currentMillis = 0;
+unsigned long sensor1 = 0;
+unsigned long sensor2 = 0;
+unsigned long sensor3 = 0;
+
+
+String globalSensorData = "";
 
 // Create AsyncWebServer object on port 80
 AsyncWebServer server(80);
@@ -132,25 +138,30 @@ const char index_html[] PROGMEM = R"rawliteral(
     setTimeout(initWebSocket, 2000);
   }
   function onMessage(event) {
-    var state;
-    if (event.data == "1"){
-      state = "ON";
-    }
-    else{
-      state = "OFF";
-    }
-    document.getElementById('state').innerHTML = state;
+
+    document.getElementById('state').innerHTML = JSON.stringify(event.data);
   }
   function onLoad(event) {
     initWebSocket();
+    initAutoFetch();
     initButton();
   }
+
+  function forward(){
+    websocket.send('forward');
+  }
+
   function initButton() {
-    document.getElementById('button').addEventListener('click', toggle);
+    document.getElementById('button').addEventListener('click', forward);
   }
-  function toggle(){
-    websocket.send('toggle');
+
+  function initAutoFetch() {
+    setInterval(function() {
+      websocket.send("toggle");
+    }, 500)
   }
+
+  
 </script>
 </body>
 </html>)rawliteral";
@@ -159,14 +170,39 @@ void notifyClients() {
   ws.textAll(String(ledState));
 }
 
+void sendTextToWs(){
+  ws.textAll(globalSensorData);
+}
+
+void forward()
+{
+  Serial.println(forward);
+}
+void reverse()
+{
+  Serial.println(reverse);
+}
+void left()
+{
+  Serial.println(left);
+}
+void right()
+{
+  Serial.println(right);
+}
+
 void handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
   AwsFrameInfo *info = (AwsFrameInfo*)arg;
   if (info->final && info->index == 0 && info->len == len && info->opcode == WS_TEXT) {
     data[len] = 0;
-    if (strcmp((char*)data, "toggle") == 0) {
-      ledState = !ledState;
-      notifyClients();
+    if (strcmp((char*)data, "forward") == 0) {
+      forward();
     }
+    // if (strcmp((char*)data, "toggle") == 0) {
+      // ledState = !ledState;
+      // notifyClients();
+    sendTextToWs();
+    // }
   }
 }
 
@@ -237,16 +273,21 @@ void setup(){
 }
 
 String sensorParser(){
-  string data = "";
+  String data = "";
   currentMillis = millis();
   sensor1 = currentMillis;
   sensor2 = currentMillis+1;
   sensor2 = currentMillis+2; 
 
-  data = "{Sensor1:" + String(sensor1) + ", Sensor2: " + String(sensor2) +", Sensor3: "+ String(sensor1) +"}"  ;
+  data = "{Sensor1:" + String(sensor1) + ", Sensor2: " + String(sensor2) +", Sensor3: "+ String(sensor1) +"}" ;
+  return data;
 }
+
+
+
 
 void loop() {
   ws.cleanupClients();
+  globalSensorData = sensorParser();
   digitalWrite(ledPin, ledState);
 }
