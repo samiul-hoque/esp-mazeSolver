@@ -25,6 +25,8 @@ const char* password = "asdfzxcv";
 bool ledState = 0;
 const int ledPin = 2;
 
+unsigned long currentMillis = 0;
+
 // Create AsyncWebServer object on port 80
 AsyncWebServer server(80);
 AsyncWebSocket ws("/ws");
@@ -232,6 +234,16 @@ void setup(){
   AsyncElegantOTA.begin(&server);
   // Start server
   server.begin();
+}
+
+String sensorParser(){
+  string data = "";
+  currentMillis = millis();
+  sensor1 = currentMillis;
+  sensor2 = currentMillis+1;
+  sensor2 = currentMillis+2; 
+
+  data = "{Sensor1:" + String(sensor1) + ", Sensor2: " + String(sensor2) +", Sensor3: "+ String(sensor1) +"}"  ;
 }
 
 void loop() {
