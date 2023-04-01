@@ -1,3 +1,44 @@
+// Import required libraries
+#include <Arduino.h>
+#include <WiFi.h>
+#include <AsyncTCP.h>
+#include <ESPAsyncWebServer.h>
+#include <AsyncElegantOTA.h>
+
+// Replace with your network credentials
+const char* ssid = "Vinci's Workshop";
+const char* password = "asdfzxcv";
+
+bool ledState = 0;
+#define ledPin 2
+
+//pin definitions: motor Left
+#define motorL1 27
+#define motorL2 14
+#define motorLPwm 9
+
+#define motorR1 15
+#define motorR2 33
+#define motorRPwm 26
+
+//pin definitions: sensor
+#define xShutL 17
+#define xShutF 16
+#define xShutR 32
+
+unsigned long currentMillis = 0;
+unsigned long sensor1 = 0;
+unsigned long sensor2 = 0;
+unsigned long sensor3 = 0;
+
+
+String globalSensorData = "";
+
+// Create AsyncWebServer object on port 80
+AsyncWebServer server(80);
+AsyncWebSocket ws("/ws");
+
+const char index_html[] PROGMEM = R"rawliteral(
 <!DOCTYPE html>
 <html>
   <head>
@@ -76,18 +117,18 @@
         clear: both;
       }
     </style>
-    <title>ESP Web Server</title>
+    <title>ESP Maze Solver</title>
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <link rel="icon" href="data:," />
   </head>
   <body>
     <div class="topnav">
-      <h1>ESP WebSocket Server</h1>
+      <h1>ESP Maze Solver</h1>
     </div>
     <div class="content">
       <div class="card">
-        <h2>Output - GPIO 2</h2>
-        <p class="state">state: <span id="state">%STATE%</span></p>
+        <h2>Sensor Output</h2>
+        <p class="state"><span id="state">%STATE%</span></p>
         <div class="row">
           <div class="column">
             <p><button id="left" class="button">Left</button></p>
@@ -162,3 +203,124 @@
     </script>
   </body>
 </html>
+)rawliteral";
+
+void notifyClients() {
+  ws.textAll(String(ledState));
+}
+
+void sendTextToWs(){
+  ws.textAll(globalSensorData);
+}
+
+void forward()
+{
+  Serial.println("forward");
+}
+void reverse()
+{
+  Serial.println("reverse");
+}
+void left()
+{
+  Serial.println("left");
+}
+void right()
+{
+  Serial.println("right");
+}
+
+void handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
+  AwsFrameInfo *info = (AwsFrameInfo*)arg;
+  if (info->final && info->index == 0 && info->len == len && info->opcode == WS_TEXT) {
+    data[len] = 0;
+    if (strcmp((char*)data, "forward") == 0) {
+      forward();
+    }
+     else if (strcmp((char*)data, "reverse") == 0) {
+      reverse();
+    }
+     else if (strcmp((char*)data, "left") == 0) {
+      left();
+    }
+     else if (strcmp((char*)data, "right") == 0) {
+      right();
+    }
+    
+    sendTextToWs();
+    // }
+  }
+}
+
+void onEvent(AsyncWebSocket *server, AsyncWebSocketClient *client, AwsEventType type,
+             void *arg, uint8_t *data, size_t len) {
+  switch (type) {
+    case WS_EVT_CONNECT:
+      Serial.printf("WebSocket client #%u connected from %s\n", client->id(), client->remoteIP().toString().c_str());
+      break;
+    case WS_EVT_DISCONNECT:
+      Serial.printf("WebSocket client #%u disconnected\n", client->id());
+      break;
+    case WS_EVT_DATA:
+      handleWebSocketMessage(arg, data, len);
+      break;
+    case WS_EVT_PONG:
+    case WS_EVT_ERROR:
+      break;
+  }
+}
+
+void initWebSocket() {
+  ws.onEvent(onEvent);
+  server.addHandler(&ws);
+}
+
+void setup(){
+  // Serial port for debugging purposes
+  Serial.begin(115200);
+
+  pinMode(ledPin, OUTPUT);
+  digitalWrite(ledPin, LOW);
+  
+  // Connect to Wi-Fi
+  WiFi.begin(ssid, password);
+  while (WiFi.status() != WL_CONNECTED) {
+    delay(1000);
+    Serial.println("Connecting to WiFi..");
+  }
+
+  // Print ESP Local IP Address
+  Serial.println(WiFi.localIP());
+
+  initWebSocket();
+
+  // Route for root / web page
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
+    request->send_P(200, "text/html", index_html);
+  });
+
+  // Start ElegantOTA
+  AsyncElegantOTA.begin(&server);
+  // Start server
+  server.begin();
+}
+
+String sensorParser(){
+  String data = "";
+  currentMillis = millis();
+  sensor1 = currentMillis;
+  sensor2 = currentMillis+1;
+  sensor2 = currentMillis+2; 
+
+  data = "{Sensor1:" + String(sensor1) + ", Sensor2: " + String(sensor2) +", Sensor3: "+ String(sensor1) +"}" ;
+  return data;
+}
+
+
+
+
+void loop() {
+  ws.cleanupClients();
+  globalSensorData = sensorParser();
+  digitalWrite(ledPin, ledState);
+}
