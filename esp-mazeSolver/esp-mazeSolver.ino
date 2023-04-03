@@ -4,7 +4,7 @@
 #include <AsyncTCP.h>
 #include <ESPAsyncWebServer.h>
 #include <AsyncElegantOTA.h>
-
+#include <TB6612FNG.h>
 // Replace with your network credentials
 const char* ssid = "Vinci's Workshop";
 const char* password = "asdfzxcv";
@@ -12,10 +12,11 @@ const char* password = "asdfzxcv";
 bool ledState = 0;
 #define ledPin 2
 
+#define stby 25
 //pin definitions: motor Left
 #define motorL1 27
 #define motorL2 14
-#define motorLPwm 9
+#define motorLPwm 13
 
 #define motorR1 15
 #define motorR2 33
@@ -25,6 +26,10 @@ bool ledState = 0;
 #define xShutL 17
 #define xShutF 16
 #define xShutR 32
+
+//init motors object
+
+Tb6612fng motors(25, 27, 14, 13, 15, 33, 26);
 
 unsigned long currentMillis = 0;
 unsigned long sensor1 = 0;
@@ -216,18 +221,22 @@ void sendTextToWs(){
 void forward()
 {
   Serial.println("forward");
+  motors.drive(0.5,500);
 }
 void reverse()
 {
   Serial.println("reverse");
+  motors.drive(-0.5,500);
 }
 void left()
 {
   Serial.println("left");
+  motors.drive(-1.0, 1.0, 500);
 }
 void right()
 {
   Serial.println("right");
+  motors.drive(1.0, -1.0, 500);
 }
 
 void handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
@@ -282,6 +291,9 @@ void setup(){
   pinMode(ledPin, OUTPUT);
   digitalWrite(ledPin, LOW);
   
+  //motor init
+  motors.begin();
+  
   // Connect to Wi-Fi
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) {
@@ -306,6 +318,7 @@ void setup(){
 }
 
 String sensorParser(){
+  //returns aggregated sensor data as string for webUI
   String data = "";
   currentMillis = millis();
   sensor1 = currentMillis;
@@ -322,5 +335,4 @@ String sensorParser(){
 void loop() {
   ws.cleanupClients();
   globalSensorData = sensorParser();
-  digitalWrite(ledPin, ledState);
 }
