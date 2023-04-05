@@ -5,9 +5,22 @@
 #include <ESPAsyncWebServer.h>
 #include <AsyncElegantOTA.h>
 #include <TB6612FNG.h>
-// Replace with your network credentials
-const char* ssid = "Vinci's Workshop";
-const char* password = "asdfzxcv";
+#include "Adafruit_VL53L0X.h"
+
+//tuning variables
+int refreshRate = 20;
+int motorDelayRate = 500;
+int turnDuration = 500;
+unsigned long sensorTimer;
+unsigned long solverTimer;
+boolean solveMaze = false;
+int distanceToObstacle = 20;
+int frontDistanceToObstacle = 15;
+float motorPWM = 0.85;
+
+// Network credentials
+const char *ssid = "Vinci's Workshop";
+const char *password = "asdfzxcv";
 
 bool ledState = 0;
 #define ledPin 2
@@ -23,19 +36,31 @@ bool ledState = 0;
 #define motorRPwm 26
 
 //pin definitions: sensor
-#define xShutL 17
-#define xShutF 16
-#define xShutR 32
+#define LOX1_ADDRESS 0x30
+#define LOX2_ADDRESS 0x31
+#define LOX3_ADDRESS 0x32
+
+#define SHT_LOX1 17
+#define SHT_LOX2 16
+#define SHT_LOX3 32
 
 //init motors object
 
 Tb6612fng motors(25, 27, 14, 13, 15, 33, 26);
 
 unsigned long currentMillis = 0;
-unsigned long sensor1 = 0;
-unsigned long sensor2 = 0;
-unsigned long sensor3 = 0;
+int sensorL = 0;
+int sensorF = 0;
+int sensorR = 0;
 
+//init sensor object & measurements
+Adafruit_VL53L0X lox1 = Adafruit_VL53L0X();
+Adafruit_VL53L0X lox2 = Adafruit_VL53L0X();
+Adafruit_VL53L0X lox3 = Adafruit_VL53L0X();
+
+VL53L0X_RangingMeasurementData_t measure1;
+VL53L0X_RangingMeasurementData_t measure2;
+VL53L0X_RangingMeasurementData_t measure3;
 
 String globalSensorData = "";
 
@@ -144,13 +169,13 @@ const char index_html[] PROGMEM = R"rawliteral(
               <p><button id="reverse" class="button">Reverse</button></p>
             </div>
           </div>
-
-
           <div class="column">
             <p><button id="right" class="button">Right</button></p>
           </div>
         </div>
-        
+      </div>
+      <div class="card">
+        <p><button id="solve" class="button">Solve Maze</button></p>
       </div>
     </div>
     <script>
@@ -192,12 +217,15 @@ const char index_html[] PROGMEM = R"rawliteral(
       function right() {
         websocket.send("right");
       }
-
+      function solve() {
+        websocket.send("solve");
+      }
       function initButton() {
         document.getElementById("forward").addEventListener("click", forward);
         document.getElementById("reverse").addEventListener("click", reverse);
         document.getElementById("left").addEventListener("click", left);
         document.getElementById("right").addEventListener("click", right);
+        document.getElementById("solve").addEventListener("click", solve);
       }
 
       function initAutoFetch() {
@@ -214,48 +242,101 @@ void notifyClients() {
   ws.textAll(String(ledState));
 }
 
-void sendTextToWs(){
+void sendTextToWs() {
   ws.textAll(globalSensorData);
 }
 
-void forward()
-{
+void setID() {
+  // all reset
+  digitalWrite(SHT_LOX1, LOW);
+  digitalWrite(SHT_LOX2, LOW);
+  digitalWrite(SHT_LOX3, LOW);
+  delay(10);
+  // all unreset
+  digitalWrite(SHT_LOX1, HIGH);
+  digitalWrite(SHT_LOX2, HIGH);
+  digitalWrite(SHT_LOX3, HIGH);
+  delay(10);
+
+  // activating LOX1 and resetting LOX2 & LOX3
+  digitalWrite(SHT_LOX1, HIGH);
+  digitalWrite(SHT_LOX2, LOW);
+  digitalWrite(SHT_LOX3, LOW);
+
+  // initing LOX1
+  if (!lox1.begin(LOX1_ADDRESS)) {
+    Serial.println(F("Failed to boot first VL53L0X"));
+    while (1)
+      ;
+  }
+  delay(10);
+
+  // activating LOX2 and resetting LOX3
+  digitalWrite(SHT_LOX2, HIGH);
+  digitalWrite(SHT_LOX3, LOW);
+  delay(10);
+
+  //initing LOX2
+  if (!lox2.begin(LOX2_ADDRESS)) {
+    Serial.println(F("Failed to boot second VL53L0X"));
+    while (1)
+      ;
+  }
+
+  // activating LOX3
+  digitalWrite(SHT_LOX3, HIGH);
+  delay(10);
+
+  //initing LOX3
+  if (!lox3.begin(LOX3_ADDRESS)) {
+    Serial.println(F("Failed to boot second VL53L0X"));
+    while (1)
+      ;
+  }
+}
+
+void forward() {
   Serial.println("forward");
-  motors.drive(0.5,500);
+  //motors.drive(-motorPWM, motorDelayRate);
+  motors.drive(-motorPWM);
 }
-void reverse()
-{
+void reverse() {
   Serial.println("reverse");
-  motors.drive(-0.5,500);
+  //motors.drive(motorPWM, motorDelayRate);
+  motors.drive(motorPWM);
 }
-void left()
-{
+void left() {
   Serial.println("left");
-  motors.drive(-1.0, 1.0, 500);
+  //motors.drive(motorPWM, -motorPWM, turnDuration);
+  motors.drive(motorPWM, -motorPWM);  
 }
-void right()
-{
+void right() {
   Serial.println("right");
-  motors.drive(1.0, -1.0, 500);
+  //motors.drive(-motorPWM, motorPWM, turnDuration);
+  motors.drive(-motorPWM, motorPWM);
+
+}
+
+void solve() {
+  solveMaze = !solveMaze;
 }
 
 void handleWebSocketMessage(void *arg, uint8_t *data, size_t len) {
-  AwsFrameInfo *info = (AwsFrameInfo*)arg;
+  AwsFrameInfo *info = (AwsFrameInfo *)arg;
   if (info->final && info->index == 0 && info->len == len && info->opcode == WS_TEXT) {
     data[len] = 0;
-    if (strcmp((char*)data, "forward") == 0) {
+    if (strcmp((char *)data, "forward") == 0) {
       forward();
-    }
-     else if (strcmp((char*)data, "reverse") == 0) {
+    } else if (strcmp((char *)data, "reverse") == 0) {
       reverse();
-    }
-     else if (strcmp((char*)data, "left") == 0) {
+    } else if (strcmp((char *)data, "left") == 0) {
       left();
-    }
-     else if (strcmp((char*)data, "right") == 0) {
+    } else if (strcmp((char *)data, "right") == 0) {
       right();
+    } else if (strcmp((char *)data, "solve") == 0) {
+      solve();
     }
-    
+
     sendTextToWs();
     // }
   }
@@ -284,16 +365,23 @@ void initWebSocket() {
   server.addHandler(&ws);
 }
 
-void setup(){
+void setup() {
   // Serial port for debugging purposes
   Serial.begin(115200);
-
+  while (!Serial) { delay(1); }
   pinMode(ledPin, OUTPUT);
   digitalWrite(ledPin, LOW);
-  
+  pinMode(SHT_LOX1, OUTPUT);
+  pinMode(SHT_LOX2, OUTPUT);
+  pinMode(SHT_LOX3, OUTPUT);
+
+  digitalWrite(SHT_LOX1, LOW);
+  digitalWrite(SHT_LOX2, LOW);
+  digitalWrite(SHT_LOX3, LOW);
   //motor init
+  setID();
   motors.begin();
-  
+
   // Connect to Wi-Fi
   WiFi.begin(ssid, password);
   while (WiFi.status() != WL_CONNECTED) {
@@ -307,7 +395,7 @@ void setup(){
   initWebSocket();
 
   // Route for root / web page
-  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request){
+  server.on("/", HTTP_GET, [](AsyncWebServerRequest *request) {
     request->send_P(200, "text/html", index_html);
   });
 
@@ -317,22 +405,67 @@ void setup(){
   server.begin();
 }
 
-String sensorParser(){
+void updateSensor() {
+  lox1.rangingTest(&measure1, false);  // pass in 'true' to get debug data printout!
+  lox2.rangingTest(&measure2, false);  // pass in 'true' to get debug data printout!
+  lox3.rangingTest(&measure3, false);
+
+  if (measure1.RangeStatus != 4) {
+    sensorL = measure1.RangeMilliMeter / 10;
+   // if (sensorL < distanceToObstacle) { sensorL = -1; }
+  } else {
+    sensorL = -1;
+  }
+  if (measure2.RangeStatus != 4) {
+    sensorF = measure2.RangeMilliMeter / 10;
+    if (sensorF < frontDistanceToObstacle) { sensorF = -1; }
+  } else {
+    sensorF = -1;
+  }
+  if (measure1.RangeStatus != 4) {
+    sensorR = measure3.RangeMilliMeter / 10;
+   // if (sensorR < distanceToObstacle) { sensorR = -1; }
+  } else {
+    sensorR = -1;
+  }
+}
+
+String sensorParser() {
   //returns aggregated sensor data as string for webUI
   String data = "";
-  currentMillis = millis();
-  sensor1 = currentMillis;
-  sensor2 = currentMillis+1;
-  sensor2 = currentMillis+2; 
-
-  data = "{Sensor1:" + String(sensor1) + ", Sensor2: " + String(sensor2) +", Sensor3: "+ String(sensor1) +"}" ;
+  data = "Left:" + String(sensorL) + ", Forward: " + String(sensorF) + ", Right: " + String(sensorR) + "  Solver Mode: " + solveMaze;
+  Serial.println(data);
   return data;
 }
 
 
-
-
 void loop() {
-  ws.cleanupClients();
-  globalSensorData = sensorParser();
+  unsigned long currentMillis = millis();
+
+  // ws/ sensor refresh
+  if (currentMillis - sensorTimer >= refreshRate) {
+    sensorTimer = currentMillis;
+    ws.cleanupClients();
+    updateSensor();
+    globalSensorData = sensorParser();
+
+    if (solveMaze) {
+      if (sensorF > 0) {
+        forward();
+      } else {
+
+        if (sensorR > sensorL) {
+          right();
+        }
+        else if (sensorL > sensorR) {
+          left();
+        }
+        else {
+          motors.brake();
+        }
+      }
+    } else {
+    motors.brake();
+    }
+  }
 }
